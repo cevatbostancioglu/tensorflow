@@ -16,6 +16,8 @@ limitations under the License.
 // Implements convolution operations with other kernels baked into the
 // processing, to optimize latency and memory usage.
 
+#define EIGEN_USE_THREADS
+
 #include <string.h>
 #include <map>
 #include <vector>
