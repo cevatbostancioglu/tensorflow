@@ -379,7 +379,7 @@ class Im2ColConvFunctor {
             T3* chunk_output_data =
                 output_data + (start_patch_index * filter_count);
             TGemmFunctor gemm_functor;
-            gemm_functor(m, n, k, im2col_buffer, lda, filter_data, ldb,
+            gemm_functor(context, m, n, k, im2col_buffer, lda, filter_data, ldb,
                          chunk_output_data, ldc);
           }
         }

@@ -149,9 +149,13 @@ class FusedResizeAndPadConvFunctor {
     core::ScopedUnref unref_buffer(im2col_buffer_resource);
     T1* im2col_buffer = im2col_buffer_resource->data;
 
-    typename TTypes<T1, 4>::ConstTensor input_data = input.tensor<T1, 4>();
+    const T1* input_data = input.flat<T1>().data();
+    const int64 input_height = input.shape().dim_sizes()[1];
+    const int64 input_width = input.shape().dim_sizes()[2];
 
     for (int batch = 0; batch < input_batches; ++batch) {
+      const T1* input_batch_start =
+          input_data + (batch * input_height * input_width * input_depth);
       for (int out_y = 0; out_y < output_height; ++out_y) {
         const int in_y_origin = (out_y * stride_rows) - filter_top_offset;
         for (int out_x = 0; out_x < output_width; ++out_x) {
@@ -176,6 +180,11 @@ class FusedResizeAndPadConvFunctor {
             const T1 y_lerp = in_y - top_y_index;
             T1* im2col_row_start =
                 im2col_patch_start + (filter_y * filter_width * input_depth);
+            const T1* input_top_row_start =
+                input_batch_start + (top_y_index * input_width * input_depth);
+            const T1* input_bottom_row_start =
+                input_batch_start +
+                (bottom_y_index * input_width * input_depth);
             for (int filter_x = 0; filter_x < filter_width; ++filter_x) {
               const int conv_in_x = in_x_origin + filter_x;
               float in_x = (conv_in_x - left_padding);
@@ -191,23 +200,26 @@ class FusedResizeAndPadConvFunctor {
               const T1 x_lerp = in_x - left_x_index;
               T1* im2col_row_pixel =
                   im2col_row_start + (filter_x * input_depth);
+              const T1* input_top_left_pixel =
+                  input_top_row_start + (left_x_index * input_depth);
+              const T1* input_top_right_pixel =
+                  input_top_row_start + (right_x_index * input_depth);
+              const T1* input_bottom_left_pixel =
+                  input_bottom_row_start + (left_x_index * input_depth);
+              const T1* input_bottom_right_pixel =
+                  input_bottom_row_start + (right_x_index * input_depth);
               for (int in_channel = 0; in_channel < input_depth; ++in_channel) {
                 T1 in_value;
                 if ((conv_in_x >= 0) && (conv_in_x < padded_width) &&
                     (conv_in_y >= 0) && (conv_in_y < padded_height)) {
+                  const T1 top_left = input_top_left_pixel[in_channel];
                   if (SampleMode == NEAREST) {
-                    const T1 top_left(input_data(batch, top_y_index,
-                                                 left_x_index, in_channel));
                     in_value = top_left;
                   } else if (SampleMode == BILINEAR) {
-                    const T1 top_left(input_data(batch, top_y_index,
-                                                 left_x_index, in_channel));
-                    const T1 top_right(input_data(batch, top_y_index,
-                                                  right_x_index, in_channel));
-                    const T1 bottom_left(input_data(batch, bottom_y_index,
-                                                    left_x_index, in_channel));
-                    const T1 bottom_right(input_data(
-                        batch, bottom_y_index, right_x_index, in_channel));
+                    const T1 top_right = input_top_right_pixel[in_channel];
+                    const T1 bottom_left = input_bottom_left_pixel[in_channel];
+                    const T1 bottom_right =
+                        input_bottom_right_pixel[in_channel];
                     const T1 top = top_left + (top_right - top_left) * x_lerp;
                     const T1 bottom =
                         bottom_left + (bottom_right - bottom_left) * x_lerp;
@@ -228,7 +240,8 @@ class FusedResizeAndPadConvFunctor {
           if (is_last_in_chunk || is_last_overall) {
             // Now we've assembled a set of image patches into a matrix, apply
             // a GEMM matrix multiply of the patches as rows, times the filter
-            // weights in columns, to get partial results in the output matrix.
+            // weights in columns, to get partial results in the output
+            // matrix.
             const int how_many_patches = patch_index_within_chunk + 1;
             const int m = how_many_patches;
             const int n = filter_count;
@@ -241,7 +254,7 @@ class FusedResizeAndPadConvFunctor {
             T3* chunk_output_data =
                 output_data + (start_patch_index * filter_count);
             TGemmFunctor gemm_functor;
-            gemm_functor(m, n, k, im2col_buffer, lda, filter_data, ldb,
+            gemm_functor(context, m, n, k, im2col_buffer, lda, filter_data, ldb,
                          chunk_output_data, ldc);
           }
         }
